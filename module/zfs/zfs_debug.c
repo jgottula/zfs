@@ -264,3 +264,48 @@ MODULE_PARM_DESC(zfs_dbgmsg_enable, "Enable ZFS debug message log");
 module_param(zfs_dbgmsg_maxsize, int, 0644);
 MODULE_PARM_DESC(zfs_dbgmsg_maxsize, "Maximum ZFS debug log size");
 #endif
+
+
+#ifdef _KERNEL
+
+int PRINTK_enabled = 0;
+module_param(PRINTK_enabled, int, 0644);
+
+DEFINE_PER_CPU(int,          PRINTK_depth);
+DEFINE_PER_CPU(const char *, PRINTK_funcname);
+
+void PR_COMMON(const char *level, const char *fmt, ...)
+{
+	if (!PRINTK_enabled) return;
+	
+	int depth            = this_cpu_read(PRINTK_depth);
+	const char *funcname = this_cpu_read(PRINTK_funcname);
+	
+	char *buf1 = kmem_alloc(4096, KM_SLEEP);
+	char *buf2 = kmem_alloc(4096, KM_SLEEP);
+	
+	va_list va;
+	va_start(va, fmt);
+	vsnprintf(buf1, 4096, fmt, va);
+	va_end(va);
+	
+	buf2[0] = '\0';
+	
+	strlcat(buf2, level, 4096);
+	
+	for (int i = 1; i < depth; ++i) {
+		strlcat(buf2, "  ", 4096);
+	}
+	
+	strlcat(buf2, "[ZFS:", 4096);
+	strlcat(buf2, funcname, 4096);
+	strlcat(buf2, "] ", 4096);
+	
+	strlcat(buf2, buf1, 4096);
+	printk("%s", buf2);
+	
+	kmem_free(buf1, 4096);
+	kmem_free(buf2, 4096);
+}
+
+#endif

@@ -882,9 +882,21 @@ dmu_free_long_object(objset_t *os, uint64_t object)
 	dmu_tx_t *tx;
 	int err;
 
+	FUNC_ENTER(dmu_free_long_object);
+
 	err = dmu_free_long_range(os, object, 0, DMU_OBJECT_END);
-	if (err != 0)
-		return (err);
+	if (err != 0) {
+		char *ds_name = kmem_alloc(ZFS_MAX_DATASET_NAME_LEN, KM_SLEEP);
+		dsl_dataset_name(os->os_dsl_dataset, ds_name);
+		PR_ERR("[ds '%s'] [object %llu] error %d (via dmu_free_long_range)\n", ds_name, object, err);
+		kmem_free(ds_name, ZFS_MAX_DATASET_NAME_LEN);
+		FUNC_EXIT(err);
+	} else {
+		char *ds_name = kmem_alloc(ZFS_MAX_DATASET_NAME_LEN, KM_SLEEP);
+		dsl_dataset_name(os->os_dsl_dataset, ds_name);
+		PR_OK("[ds '%s'] [object %llu] error 0\n", ds_name, object);
+		kmem_free(ds_name, ZFS_MAX_DATASET_NAME_LEN);
+	}
 
 	tx = dmu_tx_create(os);
 	dmu_tx_hold_bonus(tx, object);
@@ -898,7 +910,7 @@ dmu_free_long_object(objset_t *os, uint64_t object)
 		dmu_tx_abort(tx);
 	}
 
-	return (err);
+	FUNC_EXIT(err);
 }
 
 int

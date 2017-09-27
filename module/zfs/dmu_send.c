@@ -2555,8 +2555,14 @@ receive_freeobjects(struct receive_writer_arg *rwa,
 	uint64_t obj;
 	int next_err = 0;
 
-	if (drrfo->drr_firstobj + drrfo->drr_numobjs < drrfo->drr_firstobj)
-		return (SET_ERROR(EINVAL));
+	FUNC_ENTER(receive_freeobjects);
+
+	PR_OK("[drrfo firstobj:%llu numobjs:%llu]\n", drrfo->drr_firstobj, drrfo->drr_numobjs);
+
+	if (drrfo->drr_firstobj + drrfo->drr_numobjs < drrfo->drr_firstobj) {
+		PR_ERR("EINVAL @ %s:%d\n", __FILE__, __LINE__);
+		FUNC_EXIT(SET_ERROR(EINVAL));
+	}
 
 	for (obj = drrfo->drr_firstobj == 0 ? 1 : drrfo->drr_firstobj;
 	    obj < drrfo->drr_firstobj + drrfo->drr_numobjs && next_err == 0;
@@ -2565,18 +2571,32 @@ receive_freeobjects(struct receive_writer_arg *rwa,
 		int err;
 
 		err = dmu_object_info(rwa->os, obj, &doi);
-		if (err == ENOENT)
+		if (err == ENOENT) {
+		//	PR_OK("obj:%llu dmu_object_info returned ENOENT\n", obj);
 			continue;
-		else if (err != 0)
-			return (err);
+		} else if (err != 0) {
+			PR_ERR("obj:%llu return dmu_object_info err %d @ %s:%d\n", obj, err, __FILE__, __LINE__);
+			FUNC_EXIT(err);
+		}
 
 		err = dmu_free_long_object(rwa->os, obj);
-		if (err != 0)
-			return (err);
+		if (err != 0) {
+			PR_ERR("obj:%llu return dmu_free_long_object err %d @ %s:%d\n", obj, err, __FILE__, __LINE__);
+			FUNC_EXIT(err);
+		} else {
+		//	PR_OK("obj:%llu dmu_free_long_object OK\n", obj);
+		}
 	}
-	if (next_err != ESRCH)
-		return (next_err);
-	return (0);
+	if (next_err != ESRCH) {
+		if (next_err != 0) {
+			PR_ERR("obj:%llu dmu_object_next returned next_err %d; returning %d\n", obj, next_err, next_err);
+		} else {
+		//	PR_OK("obj:%llu dmu_object_next returned next_err 0; loop done; returning 0\n", obj);
+		}
+		FUNC_EXIT(next_err);
+	}
+//	PR_OK("obj:%llu dmu_object_next returned next_err ESRCH; returning 0\n", obj);
+	FUNC_EXIT(0);
 }
 
 noinline static int

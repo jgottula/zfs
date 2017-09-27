@@ -77,6 +77,27 @@ extern int dprintf_find_string(const char *string);
 extern void zfs_dbgmsg_print(const char *tag);
 #endif
 
+#ifdef _KERNEL
+
+DECLARE_PER_CPU(int,          PRINTK_depth);
+DECLARE_PER_CPU(const char *, PRINTK_funcname);
+
+void PR_COMMON(const char *level, const char *fmt, ...);
+#define PR_ERR(fmt, ...) PR_COMMON(KERN_ERR, fmt, ##__VA_ARGS__)
+#define PR_OK(fmt, ...) PR_COMMON(KERN_NOTICE, fmt, ##__VA_ARGS__)
+
+#define FUNC_ENTER(funcname) \
+	const char *__prev_funcname = this_cpu_read(PRINTK_funcname); \
+	this_cpu_write(PRINTK_funcname, #funcname); \
+	this_cpu_inc(PRINTK_depth)
+
+#define FUNC_EXIT(rtnval) \
+	this_cpu_write(PRINTK_funcname, __prev_funcname); \
+	this_cpu_dec(PRINTK_depth); \
+	return (rtnval)
+
+#endif
+
 #ifdef	__cplusplus
 }
 #endif

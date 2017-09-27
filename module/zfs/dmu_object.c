@@ -310,12 +310,19 @@ dmu_object_next(objset_t *os, uint64_t *objectp, boolean_t hole, uint64_t txg)
 	struct dsl_dataset *ds = os->os_dsl_dataset;
 	int error;
 
+	FUNC_ENTER(dmu_object_next);
+
+//	PR_OK("initial *objectp: %llu\n", *objectp);
+
 	if (*objectp == 0) {
 		start_obj = 1;
+//		PR_OK("*objectp is 0, so start_obj = 1\n");
 	} else if (ds && ds->ds_feature_inuse[SPA_FEATURE_LARGE_DNODE]) {
 		uint64_t i = *objectp + 1;
 		uint64_t last_obj = *objectp | (DNODES_PER_BLOCK - 1);
 		dmu_object_info_t doi;
+
+//		PR_OK("SPA_FEATURE_LARGE_DNODE is in use; last_obj is %llu\n", last_obj);
 
 		/*
 		 * Scan through the remaining meta dnode block.  The contents
@@ -328,37 +335,53 @@ dmu_object_next(objset_t *os, uint64_t *objectp, boolean_t hole, uint64_t txg)
 			if (error == ENOENT) {
 				if (hole) {
 					*objectp = i;
-					return (0);
+//					PR_OK("i:%llu dmu_object_info returned ENOENT; hole is TRUE; setting *objectp to %llu and returning 0\n", i, *objectp);
+					FUNC_EXIT(0);
 				} else {
+//					PR_OK("i:%llu dmu_object_info returned ENOENT; hole is FALSE; incrementing i to %llu\n", i, i + 1);
 					i++;
 				}
 			} else if (error == EEXIST) {
+//				PR_OK("i:%llu dmu_object_info returned EEXIST; incrementing i to %llu\n", i, i + 1);
 				i++;
 			} else if (error == 0) {
 				if (hole) {
+//					uint64_t prev_i = i;
 					i += doi.doi_dnodesize >> DNODE_SHIFT;
+//					PR_OK("i:%llu dmu_object_info returned 0; hole is TRUE; adding %llu (%llu >> DNODE_SHIFT) to i: %llu\n", prev_i, doi.doi_dnodesize >> DNODE_SHIFT, doi.doi_dnodesize, i);
 				} else {
 					*objectp = i;
-					return (0);
+//					PR_OK("i:%llu dmu_object_info returned 0; hole is FALSE; setting *objectp to %llu and returning 0\n", i, *objectp);
+					FUNC_EXIT(0);
 				}
 			} else {
-				return (error);
+//				PR_ERR("i:%llu dmu_object_info returned error %d @ %s:%d\n", i, error, __FILE__, __LINE__);
+				FUNC_EXIT(error);
 			}
 		}
 
 		start_obj = i;
+//		PR_OK("done with loop; setting start_obj to %llu\n", start_obj);
 	} else {
 		start_obj = *objectp + 1;
+//		PR_OK("SPA_FEATURE_LARGE_DNODE not in use, so start_obj = %llu\n", start_obj);
 	}
 
 	offset = start_obj << DNODE_SHIFT;
+//	PR_OK("offset = %llx\n", offset);
 
 	error = dnode_next_offset(DMU_META_DNODE(os),
 	    (hole ? DNODE_FIND_HOLE : 0), &offset, 0, DNODES_PER_BLOCK, txg);
 
 	*objectp = offset >> DNODE_SHIFT;
+//	PR_OK("dnode_next_offset set offset = %llx; *objectp = %llu\n", offset, *objectp);
 
-	return (error);
+	if (error != 0) {
+//		PR_ERR("dnode_next_offset returned error %d @ %s:%d\n", error, __FILE__, __LINE__);
+	} else {
+//		PR_OK("dnode_next_offset returned 0; returning 0\n");
+	}
+	FUNC_EXIT(error);
 }
 
 /*
