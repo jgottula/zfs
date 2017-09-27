@@ -297,6 +297,23 @@ dmu_object_free(objset_t *os, uint64_t object, dmu_tx_t *tx)
 	return (0);
 }
 
+int PRINTK_dmu_object_next = 0;
+module_param(PRINTK_dmu_object_next, int, 0644);
+MODULE_PARM_DESC(PRINTK_dmu_object_next, "[PRINTK] dmu_object.c: dmu_object_next");
+
+DECLARE_PER_CPU(int, INFUNC_receive_freeobjects);
+
+static void printk_1(const char *fmt, ...)
+{
+	if (this_cpu_read(INFUNC_receive_freeobjects) && PRINTK_dmu_object_next) {
+		va_list va;
+		va_start(va, fmt);
+		(void)vprintk(fmt, va);
+		va_end(va);
+	}
+}
+
+
 /*
  * Return (in *objectp) the next object which is allocated (or a hole)
  * after *object, taking into account only objects that may have been modified
@@ -310,12 +327,17 @@ dmu_object_next(objset_t *os, uint64_t *objectp, boolean_t hole, uint64_t txg)
 	struct dsl_dataset *ds = os->os_dsl_dataset;
 	int error;
 
+	printk_1(KERN_INFO "[ZFS:dmu_object_next] initial *objectp: %llu\n", *objectp);
+
 	if (*objectp == 0) {
 		start_obj = 1;
+		printk_1(KERN_INFO "[ZFS:dmu_object_next] *objectp is 0, so start_obj = 1\n");
 	} else if (ds && ds->ds_feature_inuse[SPA_FEATURE_LARGE_DNODE]) {
 		uint64_t i = *objectp + 1;
 		uint64_t last_obj = *objectp | (DNODES_PER_BLOCK - 1);
 		dmu_object_info_t doi;
+
+		printk_1(KERN_INFO "[ZFS:dmu_object_next] SPA_FEATURE_LARGE_DNODE is in use; last_obj is %llu\n", last_obj);
 
 		/*
 		 * Scan through the remaining meta dnode block.  The contents
@@ -328,36 +350,50 @@ dmu_object_next(objset_t *os, uint64_t *objectp, boolean_t hole, uint64_t txg)
 			if (error == ENOENT) {
 				if (hole) {
 					*objectp = i;
+					printk_1(KERN_INFO "[ZFS:dmu_object_next] i:%llu dmu_object_info returned ENOENT; hole is TRUE; setting *objectp to %llu and returning 0\n", i, *objectp);
 					return (0);
 				} else {
+					printk_1(KERN_INFO "[ZFS:dmu_object_next] i:%llu dmu_object_info returned ENOENT; hole is FALSE; incrementing i to %llu\n", i, i + 1);
 					i++;
 				}
 			} else if (error == EEXIST) {
+				printk_1(KERN_INFO "[ZFS:dmu_object_next] i:%llu dmu_object_info returned EEXIST; incrementing i to %llu\n", i, i + 1);
 				i++;
 			} else if (error == 0) {
 				if (hole) {
+					uint64_t prev_i = i;
 					i += doi.doi_dnodesize >> DNODE_SHIFT;
+					printk_1(KERN_INFO "[ZFS:dmu_object_next] i:%llu dmu_object_info returned 0; hole is TRUE; adding %llu (%llu >> DNODE_SHIFT) to i: %llu\n", prev_i, doi.doi_dnodesize >> DNODE_SHIFT, doi.doi_dnodesize, i);
 				} else {
 					*objectp = i;
+					printk_1(KERN_INFO "[ZFS:dmu_object_next] i:%llu dmu_object_info returned 0; hole is FALSE; setting *objectp to %llu and returning 0\n", i, *objectp);
 					return (0);
 				}
 			} else {
+				printk_1(KERN_ERR "[ZFS:dmu_object_next] i:%llu dmu_object_info returned error %d @ %s:%d\n", i, error, __FILE__, __LINE__);
 				return (error);
 			}
 		}
 
 		start_obj = i;
+		printk_1(KERN_ERR "[ZFS:dmu_object_next] done with loop; setting start_obj to %llu\n", start_obj);
 	} else {
 		start_obj = *objectp + 1;
+		printk_1(KERN_INFO "[ZFS:dmu_object_next] SPA_FEATURE_LARGE_DNODE not in use, so start_obj = %llu\n", start_obj);
 	}
 
 	offset = start_obj << DNODE_SHIFT;
+	printk_1(KERN_INFO "[ZFS:dmu_object_next] offset = %llx\n", offset);
 
 	error = dnode_next_offset(DMU_META_DNODE(os),
 	    (hole ? DNODE_FIND_HOLE : 0), &offset, 0, DNODES_PER_BLOCK, txg);
 
+	printk_1(KERN_INFO "[ZFS:dmu_object_next] dnode_next_offset set offset = %llx; *objectp = %llu\n", offset, *objectp);
 	*objectp = offset >> DNODE_SHIFT;
 
+	if (error != 0) {
+		printk_1(KERN_ERR "[ZFS:dmu_object_next] dnode_next_offset returned error %d @ %s:%d\n", error, __FILE__, __LINE__);
+	}
 	return (error);
 }
 
