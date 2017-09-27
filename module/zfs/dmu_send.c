@@ -2547,6 +2547,23 @@ receive_object(struct receive_writer_arg *rwa, struct drr_object *drro,
 	return (0);
 }
 
+int PRINTK_receive_freeobjects = 0;
+module_param(PRINTK_receive_freeobjects, int, 0644);
+MODULE_PARM_DESC(PRINTK_receive_freeobjects, "[PRINTK] dmu_send.c: receive_freeobjects");
+
+DEFINE_PER_CPU(int, INFUNC_receive_freeobjects);
+
+static void printk_1(const char *fmt, ...)
+{
+	if (this_cpu_read(INFUNC_receive_freeobjects) && PRINTK_receive_freeobjects) {
+		va_list va;
+		va_start(va, fmt);
+		(void)vprintk(fmt, va);
+		va_end(va);
+	}
+}
+
+
 /* ARGSUSED */
 noinline static int
 receive_freeobjects(struct receive_writer_arg *rwa,
@@ -2555,8 +2572,16 @@ receive_freeobjects(struct receive_writer_arg *rwa,
 	uint64_t obj;
 	int next_err = 0;
 
-	if (drrfo->drr_firstobj + drrfo->drr_numobjs < drrfo->drr_firstobj)
+	char *ds_name = kmem_alloc(ZFS_MAX_DATASET_NAME_LEN, KM_SLEEP);
+	dsl_dataset_name(rwa->os->os_dsl_dataset, ds_name);
+	printk_1(KERN_INFO "[ZFS:receive_freeobjects] rwa: [ds '%s']\n", ds_name);
+	printk_1(KERN_INFO "[ZFS:receive_freeobjects] drrfo: [firstobj %llu] [numobjs %llu]\n", drrfo->drr_firstobj, drrfo->drr_numobjs);
+	kmem_free(ds_name, ZFS_MAX_DATASET_NAME_LEN);
+
+	if (drrfo->drr_firstobj + drrfo->drr_numobjs < drrfo->drr_firstobj) {
+		printk_1(KERN_ERR "[ZFS:receive_freeobjects] EINVAL @ %s:%d\n", __FILE__, __LINE__);
 		return (SET_ERROR(EINVAL));
+	}
 
 	for (obj = drrfo->drr_firstobj == 0 ? 1 : drrfo->drr_firstobj;
 	    obj < drrfo->drr_firstobj + drrfo->drr_numobjs && next_err == 0;
@@ -2566,18 +2591,29 @@ receive_freeobjects(struct receive_writer_arg *rwa,
 
 		err = dmu_object_info(rwa->os, obj, &doi);
 		if (err == ENOENT) {
+			printk_1(KERN_INFO "[ZFS:receive_freeobjects] obj:%llu dmu_object_info returned ENOENT; incrementing obj to %llu\n", obj, obj + 1);
 			obj++;
 			continue;
 		} else if (err != 0) {
+			printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu return dmu_object_info err %d @ %s:%d\n", obj, err, __FILE__, __LINE__);
 			return (err);
 		}
 
 		err = dmu_free_long_object(rwa->os, obj);
-		if (err != 0)
+		if (err != 0) {
+			printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu return dmu_free_long_object err %d @ %s:%d\n", obj, err, __FILE__, __LINE__);
 			return (err);
+		} else {
+			printk_1(KERN_INFO "[ZFS:receive_freeobjects] obj:%llu dmu_free_long_object OK\n", obj);
+		}
 	}
-	if (next_err != ESRCH)
+	if (next_err != ESRCH) {
+		if (next_err != 0) {
+			printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu return next_err %d @ %s:%d\n", obj, next_err, __FILE__, __LINE__);
+		}
 		return (next_err);
+	}
+	printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu return 0 @ %s:%d\n", obj, __FILE__, __LINE__);
 	return (0);
 }
 
@@ -3381,7 +3417,10 @@ receive_process_record(struct receive_writer_arg *rwa,
 	{
 		struct drr_freeobjects *drrfo =
 		    &rrd->header.drr_u.drr_freeobjects;
+		int yep = (101 >= drrfo->drr_firstobj && 101 < drrfo->drr_firstobj + drrfo->drr_numobjs);
+		if (yep) this_cpu_inc(INFUNC_receive_freeobjects);
 		err = receive_freeobjects(rwa, drrfo);
+		if (yep) this_cpu_dec(INFUNC_receive_freeobjects);
 		break;
 	}
 	case DRR_WRITE:
