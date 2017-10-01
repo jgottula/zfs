@@ -4183,17 +4183,19 @@ zfs_rename(zfs_handle_t *zhp, const char *target, boolean_t recursive,
 	/*
 	 * Make sure the target name is valid
 	 */
-	if (zhp->zfs_type == ZFS_TYPE_SNAPSHOT) {
-		if ((strchr(target, '@') == NULL) ||
-		    *target == '@') {
+	if (zhp->zfs_type == ZFS_TYPE_SNAPSHOT || zhp->zfs_type == ZFS_TYPE_BOOKMARK) {
+		char c = (zhp->zfs_type == ZFS_TYPE_BOOKMARK ? '#' : '@');
+		
+		if ((strchr(target, c) == NULL) ||
+		    *target == c) {
 			/*
-			 * Snapshot target name is abbreviated,
+			 * Snapshot/bookmark target name is abbreviated,
 			 * reconstruct full dataset name
 			 */
 			(void) strlcpy(parent, zhp->zfs_name,
 			    sizeof (parent));
-			delim = strchr(parent, '@');
-			if (strchr(target, '@') == NULL)
+			delim = strchr(parent, c);
+			if (strchr(target, c) == NULL)
 				*(++delim) = '\0';
 			else
 				*delim = '\0';
@@ -4203,12 +4205,18 @@ zfs_rename(zfs_handle_t *zhp, const char *target, boolean_t recursive,
 			/*
 			 * Make sure we're renaming within the same dataset.
 			 */
-			delim = strchr(target, '@');
+			delim = strchr(target, c);
 			if (strncmp(zhp->zfs_name, target, delim - target)
-			    != 0 || zhp->zfs_name[delim - target] != '@') {
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "snapshots must be part of same "
-				    "dataset"));
+			    != 0 || zhp->zfs_name[delim - target] != c) {
+				if (zhp->zfs_type == ZFS_TYPE_BOOKMARK) {
+					zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+					    "bookmarks must be part of same "
+					    "dataset"));
+				} else {
+					zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+					    "snapshots must be part of same "
+					    "dataset"));
+				}
 				return (zfs_error(hdl, EZFS_CROSSTARGET,
 				    errbuf));
 			}
@@ -4218,7 +4226,7 @@ zfs_rename(zfs_handle_t *zhp, const char *target, boolean_t recursive,
 	} else {
 		if (recursive) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "recursive rename must be a snapshot"));
+			    "recursive rename must be a snapshot/bookmark"));
 			return (zfs_error(hdl, EZFS_BADTYPE, errbuf));
 		}
 
@@ -4258,12 +4266,14 @@ zfs_rename(zfs_handle_t *zhp, const char *target, boolean_t recursive,
 	}
 
 	if (recursive) {
+		char c = (zhp->zfs_type == ZFS_TYPE_BOOKMARK ? '#' : '@');
+		
 		parentname = zfs_strdup(zhp->zfs_hdl, zhp->zfs_name);
 		if (parentname == NULL) {
 			ret = -1;
 			goto error;
 		}
-		delim = strchr(parentname, '@');
+		delim = strchr(parentname, c);
 		*delim = '\0';
 		zhrp = zfs_open(zhp->zfs_hdl, parentname, ZFS_TYPE_DATASET);
 		if (zhrp == NULL) {
@@ -4307,9 +4317,15 @@ zfs_rename(zfs_handle_t *zhp, const char *target, boolean_t recursive,
 		    "cannot rename '%s'"), zc.zc_name);
 
 		if (recursive && errno == EEXIST) {
-			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "a child dataset already has a snapshot "
-			    "with the new name"));
+			if (zhp->zfs_type == ZFS_TYPE_BOOKMARK) {
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "a child dataset already has a bookmark "
+				    "with the new name"));
+			} else {
+				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
+				    "a child dataset already has a snapshot "
+				    "with the new name"));
+			}
 			(void) zfs_error(hdl, EZFS_EXISTS, errbuf);
 		} else if (errno == EACCES) {
 			if (zfs_prop_get_int(zhp, ZFS_PROP_ENCRYPTION) ==

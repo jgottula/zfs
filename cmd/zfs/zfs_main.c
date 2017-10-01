@@ -3314,6 +3314,7 @@ zfs_do_list(int argc, char **argv)
  * zfs rename [-f] <fs | snap | vol> <fs | snap | vol>
  * zfs rename [-f] -p <fs | vol> <fs | vol>
  * zfs rename -r <snap> <snap>
+ * zfs rename -r <bookmark> <bookmark>
  *
  * Renames the given dataset to another of the same type.
  *
@@ -3375,9 +3376,9 @@ zfs_do_rename(int argc, char **argv)
 		usage(B_FALSE);
 	}
 
-	if (recurse && strchr(argv[0], '@') == 0) {
+	if (recurse && strchr(argv[0], '@') == 0 && strchr(argv[0], '#') == 0) {
 		(void) fprintf(stderr, gettext("source dataset for recursive "
-		    "rename must be a snapshot\n"));
+		    "rename must be a snapshot or bookmark\n"));
 		usage(B_FALSE);
 	}
 
