@@ -6946,8 +6946,48 @@ zfs_do_diff(int argc, char **argv)
 	return (err != 0);
 }
 
+typedef struct bmark_cbdata {
+	nvlist_t *bd_nvl;
+	boolean_t bd_recursive;
+	const char *bd_snapname;
+} bmark_cbdata_t;
+
+static int
+zfs_bookmark_cb(zfs_handle_t *zhp, void *arg)
+{
+	bmark_cbdata_t *bd = arg;
+	char *bookname;
+	char *snapname;
+	int rv = 0;
+	int error;
+
+	if (bd->bd_recursive &&
+	    zfs_prop_get_int(zhp, ZFS_PROP_INCONSISTENT) != 0) {
+		zfs_close(zhp);
+		return (0);
+	}
+
+	error = asprintf(&bookname, "%s#%s", zfs_get_name(zhp), bd->bd_snapname);
+	if (error == -1)
+		nomem();
+	error = asprintf(&snapname, "%s@%s", zfs_get_name(zhp), bd->bd_snapname);
+	if (error == -1)
+		nomem();
+	fnvlist_add_string(bd->bd_nvl, bookname, snapname);
+	free(bookname);
+	free(snapname);
+
+	if (bd->bd_recursive)
+		rv = zfs_iter_filesystems(zhp, zfs_bookmark_cb, bd);
+	zfs_close(zhp);
+	return (rv);
+}
+
+
+
 /*
  * zfs bookmark <fs@snap> <fs#bmark>
+ * zfs bookmark -r <fs@snap>
  *
  * Creates a bookmark with the given name from the given snapshot.
  */
@@ -6960,10 +7000,17 @@ zfs_do_bookmark(int argc, char **argv)
 	nvlist_t *nvl;
 	int ret = 0;
 	int c;
+	bmark_cbdata_t bd = { 0 };
+
+	if (nvlist_alloc(&bd.bd_nvl, NV_UNIQUE_NAME, 0) != 0)
+		nomem();
 
 	/* check options */
-	while ((c = getopt(argc, argv, "")) != -1) {
+	while ((c = getopt(argc, argv, "r")) != -1) {
 		switch (c) {
+		case 'r':
+			bd.bd_recursive = B_TRUE;
+			break;
 		case '?':
 			(void) fprintf(stderr,
 			    gettext("invalid option '%c'\n"), optopt);
@@ -6973,6 +7020,100 @@ zfs_do_bookmark(int argc, char **argv)
 
 	argc -= optind;
 	argv += optind;
+
+	if (bd.bd_recursive) {
+		char *atp;
+		nvlist_t *errors;
+		
+		/* check number of arguments */
+		if (argc < 1) {
+			(void) fprintf(stderr, gettext("missing snapshot argument\n"));
+		}
+		
+		if (strchr(argv[0], '@') == NULL) {
+			(void) fprintf(stderr,
+			    gettext("invalid snapshot name '%s': "
+			    "must contain a '@'\n"), argv[1]);
+			goto usage;
+		}
+		
+		atp = strchr(argv[0], '@');
+		if (atp == NULL)
+			goto usage;
+		*atp = '\0';
+		bd.bd_snapname = atp + 1;
+		zhp = zfs_open(g_zfs, argv[0], ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME);
+		if (zhp == NULL)
+			goto usage;
+		if (zfs_bookmark_cb(zhp, &bd) != 0)
+			goto usage;
+		
+		// DEBUGGING
+		fprintf(stderr, "bd.bd_nvl:\n");
+		fprintf(stderr, "================================================================================\n");
+		nvlist_print(stderr, bd.bd_nvl);
+		fprintf(stderr, "================================================================================\n");
+		
+		errors = fnvlist_alloc();
+		ret = lzc_bookmark(bd.bd_nvl, &errors);
+		nvlist_free(bd.bd_nvl);
+		
+		// DEBUGGING
+		fprintf(stderr, "ret: %d\n", ret);
+		
+		// DEBUGGING
+		fprintf(stderr, "errors:\n");
+		fprintf(stderr, "================================================================================\n");
+		nvlist_print(stderr, errors);
+		fprintf(stderr, "================================================================================\n");
+		
+		if (ret != 0) {
+			nvpair_t *nvp = NULL;
+			while ((nvp = nvlist_next_nvpair(errors, nvp)) != NULL) {
+				const char *nvp_name = nvpair_name(nvp);
+				int32_t nvp_err = 0;
+				const char *err_msg;
+				char errbuf[1024];
+				
+				(void) snprintf(errbuf, sizeof (errbuf),
+				    dgettext(TEXT_DOMAIN,
+				    "cannot create bookmark '%s'"), nvp_name);
+				
+				(void) nvpair_value_int32(nvp, &nvp_err);
+				
+				switch (nvp_err) {
+				case EXDEV:
+					err_msg = "bookmark is in a different pool";
+					break;
+				case EEXIST:
+					err_msg = "bookmark exists";
+					break;
+				case EINVAL:
+					err_msg = "invalid argument";
+					break;
+				case ENOTSUP:
+					err_msg = "bookmark feature not enabled";
+					break;
+				case ENOSPC:
+					err_msg = "out of space";
+					break;
+				case ENOENT:
+					err_msg = "dataset does not exist";
+					break;
+				default:
+					err_msg = "unknown error";
+					break;
+				}
+				
+				(void) fprintf(stderr, "%s: %s\n", errbuf,
+				    dgettext(TEXT_DOMAIN, err_msg));
+			}
+		}
+		
+		fnvlist_free(errors);
+		
+		return (ret != 0);
+	}
 
 	/* check number of arguments */
 	if (argc < 1) {
@@ -7063,6 +7204,7 @@ zfs_do_bookmark(int argc, char **argv)
 	return (ret != 0);
 
 usage:
+	nvlist_free(bd.bd_nvl);
 	usage(B_FALSE);
 	return (-1);
 }
