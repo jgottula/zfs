@@ -388,11 +388,13 @@ dmu_object_next(objset_t *os, uint64_t *objectp, boolean_t hole, uint64_t txg)
 	error = dnode_next_offset(DMU_META_DNODE(os),
 	    (hole ? DNODE_FIND_HOLE : 0), &offset, 0, DNODES_PER_BLOCK, txg);
 
-	printk_1(KERN_INFO "[ZFS:dmu_object_next] dnode_next_offset set offset = %llx; *objectp = %llu\n", offset, *objectp);
 	*objectp = offset >> DNODE_SHIFT;
+	printk_1(KERN_INFO "[ZFS:dmu_object_next] dnode_next_offset set offset = %llx; *objectp = %llu\n", offset, *objectp);
 
 	if (error != 0) {
 		printk_1(KERN_ERR "[ZFS:dmu_object_next] dnode_next_offset returned error %d @ %s:%d\n", error, __FILE__, __LINE__);
+	} else {
+		printk_1(KERN_INFO "[ZFS:dmu_object_next] dnode_next_offset returned 0; returning 0\n");
 	}
 	return (error);
 }

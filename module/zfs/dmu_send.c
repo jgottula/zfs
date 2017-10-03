@@ -2609,11 +2609,13 @@ receive_freeobjects(struct receive_writer_arg *rwa,
 	}
 	if (next_err != ESRCH) {
 		if (next_err != 0) {
-			printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu return next_err %d @ %s:%d\n", obj, next_err, __FILE__, __LINE__);
+			printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu dmu_object_next returned next_err %d; returning %d\n", obj, next_err, next_err);
+		} else {
+			printk_1(KERN_INFO "[ZFS:receive_freeobjects] obj:%llu dmu_object_next returned next_err 0; loop done; returning 0\n", obj);
 		}
 		return (next_err);
 	}
-	printk_1(KERN_ERR "[ZFS:receive_freeobjects] obj:%llu return 0 @ %s:%d\n", obj, __FILE__, __LINE__);
+	printk_1(KERN_INFO "[ZFS:receive_freeobjects] obj:%llu dmu_object_next returned next_err ESRCH; returning 0\n", obj);
 	return (0);
 }
 
