@@ -35,6 +35,42 @@
 #include <sys/zfs_znode.h>
 #include <sys/fs/zfs.h>
 
+
+/* set to 1 for ERESTARTSYS retry cope logic; set to 0 for the usual behavior */
+#define RETRY_ENABLE 1
+
+
+#if RETRY_ENABLE
+
+/* not declared in any userspace-public header; swiped from include/linux/errno.h */
+#define ERESTARTSYS 512
+
+/* max number of retries for open() calls with ERESTARTSYS outcome before giving up */
+#define RETRY_MAX_TRIES 2500
+
+/* microseconds to sleep between each ERESTARTSYS retry */
+#define RETRY_SLEEP_USEC 3000
+
+static void
+sleep_us(long usec)
+{
+	if (usec <= 0L)
+		return;
+
+	int saved_errno = errno;
+	{
+		struct timespec t1 = { usec / 1000000L, usec % 1000000L }, t2;
+		while (errno = 0, nanosleep(&t1, &t2) != 0) {
+			if (errno != EINTR)
+				break;
+			t1 = t2;
+		}
+	}
+	errno = saved_errno;
+}
+
+#endif /* RETRY_ENABLE */
+
 static int
 ioctl_get_msg(char *var, int fd)
 {
@@ -76,7 +112,21 @@ main(int argc, char **argv)
 	dev_minor = minor(statbuf.st_rdev);
 	dev_part = dev_minor % ZVOL_MINORS;
 
+#if RETRY_ENABLE
+retry:
+	int tries = 0;
+	while ((fd = open(dev_name, O_RDONLY)) < 0 && errno == ERESTARTSYS) {
+		if (++tries < RETRY_MAX_TRIES) {
+			fprintf(stderr, "Got ERESTARTSYS on open(%s) try #%d; retrying...", dev_name, tries);
+			sleep_us(RETRY_SLEEP_USEC);
+		} else {
+			fprintf(stderr, "Got ERESTARTSYS on open(%s) try #%d; giving up!", dev_name, tries);
+			break;
+		}
+	}
+#else /* RETRY_ENABLE */
 	fd = open(dev_name, O_RDONLY);
+#endif /* RETRY_ENABLE */
 	if (fd < 0) {
 		fprintf(stderr, "Unable to open device file: %s\n", dev_name);
 		goto fail;
